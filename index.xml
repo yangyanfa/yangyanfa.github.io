@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>My Hugo Site</title>
+    <link>https://yangyanfa.github.io/</link>
+    <description>Recent content on My Hugo Site</description>
+    <generator>Hugo -- gohugo.io</generator>
+    <language>en-us</language>
+    <lastBuildDate>Wed, 21 Aug 2019 19:32:21 +0800</lastBuildDate>
+    
+	<atom:link href="https://yangyanfa.github.io/index.xml" rel="self" type="application/rss+xml" />
+    
+    
+    <item>
+      <title>Second</title>
+      <link>https://yangyanfa.github.io/post/second/</link>
+      <pubDate>Wed, 21 Aug 2019 19:32:21 +0800</pubDate>
+      
+      <guid>https://yangyanfa.github.io/post/second/</guid>
+      <description>##测试 1.啊速度过快酒哈说过的哈桑高低杠
+2.大厦数据库的海口市结婚登记库哈斯空间的
+3.大数据快点哈开始打卡速度很快撒</description>
+    </item>
+    
+    <item>
+      <title>First</title>
+      <link>https://yangyanfa.github.io/post/first/</link>
+      <pubDate>Tue, 20 Aug 2019 21:15:20 +0800</pubDate>
+      
+      <guid>https://yangyanfa.github.io/post/first/</guid>
+      <description> Hello Hugo  aaa bbb ccc  大数据 </description>
+    </item>
+    
+    <item>
+      <title>About</title>
+      <link>https://yangyanfa.github.io/about/</link>
+      <pubDate>Tue, 20 Aug 2019 21:15:02 +0800</pubDate>
+      
+      <guid>https://yangyanfa.github.io/about/</guid>
+      <description></description>
+    </item>
+    
+  </channel>
+</rss>
