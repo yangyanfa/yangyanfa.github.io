@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <title>大数据面试 // YYF</title>
+    <meta charset="utf-8" />
+    <meta name="generator" content="Hugo 0.57.2" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="author" content="YYF" />
+    <meta name="description" content="" />
+    <link rel="stylesheet" href="https://yangyanfa.github.io/css/main.min.f90f5edd436ec7b74ad05479a05705770306911f721193e7845948fb07fe1335.css" />
+
+    
+    <meta name="twitter:card" content="summary"/>
+<meta name="twitter:title" content="大数据面试"/>
+<meta name="twitter:description" content="大数据面试关键过程 Hadoop1.0内核主要由HDFS和MapReduce两个系统组成，其中MapReduce是一个离线处理框架，由编程模型（新旧API）、运行时环境（JobTracker和TaskTracker）和数据处理引擎（MapTask和ReduceTask）三部分组成。
+Hadoop2.0内核主要由HDFS、MapReduce和YARN三个系统组成，其中YARN是一个资源管理系统，负责集群资源管理和调度，MapReduce则是运行在YARN上的离线处理框架，它与Hadoop 1.0中的MapReduce在编程模型（新旧API）和数据处理引擎（MapTask和ReduceTask）两个方面是相同的。唯一不同的是运行时环境。
+Hadoop1的架构是：多个Application &ndash;&gt; JobTracker &ndash;&gt; 多个TaskTracker。
+hadoop2的架构是：多个application &ndash;&gt; ResourceManager &ndash;&gt; 多个NodeManager &ndash;&gt; 多个application Master &ndash;&gt; 多个container
+HDFS读写数据的过程
+读：
+1、跟namenode通信查询元数据，找到文件块所在的datanode服务器
+2、挑选一台datanode(就近原则，然后随机)服务器，请求建立socket流
+3、datanode开始发送数据(从磁盘里面读取数据放入流，以packet为单位来做校验)
+4、客户端以packet为单位接收，现在本地缓存，然后写入目标文件
+写：
+1、根namenode通信请求上传文件，namenode检查目标文件是否已存在，父目录是否存在
+2、namenode返回是否可以上传
+3、client请求第一个 block该传输到哪些datanode服务器上
+4、namenode返回3个datanode服务器ABC
+5、client请求3台dn中的一台A上传数据(本质上是一个RPC调用，建立pipeline)，A收到请求会继续调用B，然后B调用C，将真个pipeline建立完成，逐级返回客户端
+6、client开始往A上传第一个block(先从磁盘读取数据放到一个本地内存缓存)，以packet为单位，A收到一个packet就会传给B，B传给C;A每传一个packet会放入一个应答队列等待应答
+7、当一个block传输完成之后，client再次请求namenode上传第二个block的服务器。
+hadoop的shuffle过程
+一、Map端的shuffle
+Map端会处理输入数据并产生中间结果，这个中间结果会写到本地磁盘，而不是HDFS。每个Map的输出会先写到内存缓冲区中，当写入的数据达到设定的阈值时，系统将会启动一个线程将缓冲区的数据写到磁盘，这个过程叫做spill。 在spill写入之前，会先进行二次排序，首先根据数据所属的partition进行排序，然后每个partition中的数据再按key来排序。partition的目是将记录划分到不同的Reducer上去，以期望能够达到负载均衡，以后的Reducer就会根据partition来读取自己对应的数据。接着运行combiner(如果设置了的话)，combiner的本质也是一个Reducer，其目的是对将要写入到磁盘上的文件先进行一次处理，这样，写入到磁盘的数据量就会减少。最后将数据写到本地磁盘产生spill文件(spill文件保存在{mapred.local.dir}指定的目录中，Map任务结束后就会被删除)。 最后，每个Map任务可能产生多个spill文件，在每个Map任务完成前，会通过多路归并算法将这些spill文件归并成一个文件。至此，Map的shuffle过程就结束了。
+二、Reduce端的shuffle
+Reduce端的shuffle主要包括三个阶段，copy、sort(merge)和reduce。
+首先要将Map端产生的输出文件拷贝到Reduce端，但每个Reducer如何知道自己应该处理哪些数据呢?因为Map端进行partition的时候，实际上就相当于指定了每个Reducer要处理的数据(partition就对应了Reducer)，所以Reducer在拷贝数据的时候只需拷贝与自己对应的partition中的数据即可。每个Reducer会处理一个或者多个partition，但需要先将自己对应的partition中的数据从每个Map的输出结果中拷贝过来。 接下来就是sort阶段，也成为merge阶段，因为这个阶段的主要工作是执行了归并排序。从Map端拷贝到Reduce端的数据都是有序的，所以很适合归并排序。最终在Reduce端生成一个较大的文件作为Reduce的输入。 最后就是Reduce过程了，在这个过程中产生了最终的输出结果，并将其写到HDFS上。
+Reducer如何知道自己应该处理哪些数据呢？
+因为Map端进行partition的时候，实际上就相当于指定了每个Reducer要处理的数据(partition就对应了Reducer)，所以Reducer在拷贝数据的时候只需拷贝与自己对应的partition中的数据即可。每个Reducer会处理一个或者多个partition。 MapReduce为每个数据分片（split）生成一个Map任务，对每条记录（RR）调用一次map( )方法。若一个Map任务处理的数据分片有n条记录，则在该Map任务中会调用n次map( )方法。map( )方法对输入的进行处理，产生一系列新的键/值对[]输出。 在进入Reducer处理前，必须等所有的Map任务完成，因此在进入Reducer前需要一个同步障。这个阶段也负责对map输出的数据进行收集和整理，以便Reduce节点可以完全基于本节点上的数据计算。因此，同步障中对Map输出数据的一个重要处理就是按键值的数据分区（Partitioner）。 Partitioner的作用就是对Map输出的中间结果按key进行分组，同一组的数据交给同一个Reduce节点处理，以避免Reduce节点在处理中访问其他Reduce节点。HadoopMapReduce框架中自带了一个HashPartitioner类，默认情况下，HashPartitioner对Map输出的中间结果中的key取hash值，并按Reduce节点数取模来确定分配到哪一个Reduce节点。相同key值的中间结果一定送到同一个Reduce节点。 Reducer是对Partitioner分区后送来的一组[]进行合并处理的抽象类，其中重要的就是reduce( )方法。MapReduce为Reduce节点上相同key的一组value值（即）调用一次reduce( )方法，对进行整理或处理，产生最终的结果[]。
+Cluster Manager：在standalone模式中即为Master主节点，控制整个集群，监控worker。在YARN模式中为资源管理器
+Worker节点：从节点，负责控制计算节点，启动Executor或者Driver。
+Driver： 运行Application 的main()函数
+Executor：执行器，是为某个Application运行在worker node上的一个进程
+spark运行流程图如下：
+1.构建Spark Application的运行环境，启动SparkContext
+2.SparkContext向资源管理器（可以是Standalone，Mesos，Yarn）申请运行Executor资源，并启动StandaloneExecutorbackend，
+3.Executor向SparkContext申请Task
+4.SparkContext将应用程序分发给Executor"/>
+
+    <meta property="og:title" content="大数据面试" />
+<meta property="og:description" content="大数据面试关键过程 Hadoop1.0内核主要由HDFS和MapReduce两个系统组成，其中MapReduce是一个离线处理框架，由编程模型（新旧API）、运行时环境（JobTracker和TaskTracker）和数据处理引擎（MapTask和ReduceTask）三部分组成。
+Hadoop2.0内核主要由HDFS、MapReduce和YARN三个系统组成，其中YARN是一个资源管理系统，负责集群资源管理和调度，MapReduce则是运行在YARN上的离线处理框架，它与Hadoop 1.0中的MapReduce在编程模型（新旧API）和数据处理引擎（MapTask和ReduceTask）两个方面是相同的。唯一不同的是运行时环境。
+Hadoop1的架构是：多个Application &ndash;&gt; JobTracker &ndash;&gt; 多个TaskTracker。
+hadoop2的架构是：多个application &ndash;&gt; ResourceManager &ndash;&gt; 多个NodeManager &ndash;&gt; 多个application Master &ndash;&gt; 多个container
+HDFS读写数据的过程
+读：
+1、跟namenode通信查询元数据，找到文件块所在的datanode服务器
+2、挑选一台datanode(就近原则，然后随机)服务器，请求建立socket流
+3、datanode开始发送数据(从磁盘里面读取数据放入流，以packet为单位来做校验)
+4、客户端以packet为单位接收，现在本地缓存，然后写入目标文件
+写：
+1、根namenode通信请求上传文件，namenode检查目标文件是否已存在，父目录是否存在
+2、namenode返回是否可以上传
+3、client请求第一个 block该传输到哪些datanode服务器上
+4、namenode返回3个datanode服务器ABC
+5、client请求3台dn中的一台A上传数据(本质上是一个RPC调用，建立pipeline)，A收到请求会继续调用B，然后B调用C，将真个pipeline建立完成，逐级返回客户端
+6、client开始往A上传第一个block(先从磁盘读取数据放到一个本地内存缓存)，以packet为单位，A收到一个packet就会传给B，B传给C;A每传一个packet会放入一个应答队列等待应答
+7、当一个block传输完成之后，client再次请求namenode上传第二个block的服务器。
+hadoop的shuffle过程
+一、Map端的shuffle
+Map端会处理输入数据并产生中间结果，这个中间结果会写到本地磁盘，而不是HDFS。每个Map的输出会先写到内存缓冲区中，当写入的数据达到设定的阈值时，系统将会启动一个线程将缓冲区的数据写到磁盘，这个过程叫做spill。 在spill写入之前，会先进行二次排序，首先根据数据所属的partition进行排序，然后每个partition中的数据再按key来排序。partition的目是将记录划分到不同的Reducer上去，以期望能够达到负载均衡，以后的Reducer就会根据partition来读取自己对应的数据。接着运行combiner(如果设置了的话)，combiner的本质也是一个Reducer，其目的是对将要写入到磁盘上的文件先进行一次处理，这样，写入到磁盘的数据量就会减少。最后将数据写到本地磁盘产生spill文件(spill文件保存在{mapred.local.dir}指定的目录中，Map任务结束后就会被删除)。 最后，每个Map任务可能产生多个spill文件，在每个Map任务完成前，会通过多路归并算法将这些spill文件归并成一个文件。至此，Map的shuffle过程就结束了。
+二、Reduce端的shuffle
+Reduce端的shuffle主要包括三个阶段，copy、sort(merge)和reduce。
+首先要将Map端产生的输出文件拷贝到Reduce端，但每个Reducer如何知道自己应该处理哪些数据呢?因为Map端进行partition的时候，实际上就相当于指定了每个Reducer要处理的数据(partition就对应了Reducer)，所以Reducer在拷贝数据的时候只需拷贝与自己对应的partition中的数据即可。每个Reducer会处理一个或者多个partition，但需要先将自己对应的partition中的数据从每个Map的输出结果中拷贝过来。 接下来就是sort阶段，也成为merge阶段，因为这个阶段的主要工作是执行了归并排序。从Map端拷贝到Reduce端的数据都是有序的，所以很适合归并排序。最终在Reduce端生成一个较大的文件作为Reduce的输入。 最后就是Reduce过程了，在这个过程中产生了最终的输出结果，并将其写到HDFS上。
+Reducer如何知道自己应该处理哪些数据呢？
+因为Map端进行partition的时候，实际上就相当于指定了每个Reducer要处理的数据(partition就对应了Reducer)，所以Reducer在拷贝数据的时候只需拷贝与自己对应的partition中的数据即可。每个Reducer会处理一个或者多个partition。 MapReduce为每个数据分片（split）生成一个Map任务，对每条记录（RR）调用一次map( )方法。若一个Map任务处理的数据分片有n条记录，则在该Map任务中会调用n次map( )方法。map( )方法对输入的进行处理，产生一系列新的键/值对[]输出。 在进入Reducer处理前，必须等所有的Map任务完成，因此在进入Reducer前需要一个同步障。这个阶段也负责对map输出的数据进行收集和整理，以便Reduce节点可以完全基于本节点上的数据计算。因此，同步障中对Map输出数据的一个重要处理就是按键值的数据分区（Partitioner）。 Partitioner的作用就是对Map输出的中间结果按key进行分组，同一组的数据交给同一个Reduce节点处理，以避免Reduce节点在处理中访问其他Reduce节点。HadoopMapReduce框架中自带了一个HashPartitioner类，默认情况下，HashPartitioner对Map输出的中间结果中的key取hash值，并按Reduce节点数取模来确定分配到哪一个Reduce节点。相同key值的中间结果一定送到同一个Reduce节点。 Reducer是对Partitioner分区后送来的一组[]进行合并处理的抽象类，其中重要的就是reduce( )方法。MapReduce为Reduce节点上相同key的一组value值（即）调用一次reduce( )方法，对进行整理或处理，产生最终的结果[]。
+Cluster Manager：在standalone模式中即为Master主节点，控制整个集群，监控worker。在YARN模式中为资源管理器
+Worker节点：从节点，负责控制计算节点，启动Executor或者Driver。
+Driver： 运行Application 的main()函数
+Executor：执行器，是为某个Application运行在worker node上的一个进程
+spark运行流程图如下：
+1.构建Spark Application的运行环境，启动SparkContext
+2.SparkContext向资源管理器（可以是Standalone，Mesos，Yarn）申请运行Executor资源，并启动StandaloneExecutorbackend，
+3.Executor向SparkContext申请Task
+4.SparkContext将应用程序分发给Executor" />
+<meta property="og:type" content="article" />
+<meta property="og:url" content="https://yangyanfa.github.io/post/%E5%A4%A7%E6%95%B0%E6%8D%AE%E9%9D%A2%E8%AF%95/" />
+<meta property="article:published_time" content="2019-08-24T19:14:26+08:00" />
+<meta property="article:modified_time" content="2019-08-24T19:14:26+08:00" />
+
+
+  </head>
+  <body>
+    <header class="app-header">
+      <a href="https://yangyanfa.github.io/"><img class="app-header-avatar" src="/avatar.jpg" alt="YYF" /></a>
+      <h1>YYF</h1>
+      <p>Hello Hugo.</p>
+      <div class="app-header-social">
+        
+          <a target="_blank" href="https://github.com/yangyanfa"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-github">
+  <title>github</title>
+  <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+</svg></a>
+        
+          <a target="_blank" href="https://twitter.com/gohugoio"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-twitter">
+  <title>twitter</title>
+  <path d="M23 3a10.9 10.9 0 0 1-3.14 1.53 4.48 4.48 0 0 0-7.86 3v1A10.66 10.66 0 0 1 3 4s-4 9 5 13a11.64 11.64 0 0 1-7 2c9 5 20 0 20-11.5a4.5 4.5 0 0 0-.08-.83A7.72 7.72 0 0 0 23 3z"></path>
+</svg></a>
+        
+      </div>
+    </header>
+    <main class="app-container">
+      
+  <article class="post">
+    <header class="post-header">
+      <h1 class ="post-title">大数据面试</h1>
+      <div class="post-meta">
+        <div>
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-calendar">
+  <title>calendar</title>
+  <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line>
+</svg>
+          Aug 24, 2019
+        </div>
+        <div>
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-clock">
+  <title>clock</title>
+  <circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>
+</svg>
+          4 min read
+        </div></div>
+    </header>
+    <div class="post-content">
+      
+
+<h3 id="大数据面试关键过程">大数据面试关键过程</h3>
+
+<p>Hadoop1.0内核主要由HDFS和MapReduce两个系统组成，其中MapReduce是一个离线处理框架，由编程模型（新旧API）、运行时环境（JobTracker和TaskTracker）和数据处理引擎（MapTask和ReduceTask）三部分组成。</p>
+
+<p>Hadoop2.0内核主要由HDFS、MapReduce和YARN三个系统组成，其中YARN是一个资源管理系统，负责集群资源管理和调度，MapReduce则是运行在YARN上的离线处理框架，它与Hadoop 1.0中的MapReduce在编程模型（新旧API）和数据处理引擎（MapTask和ReduceTask）两个方面是相同的。唯一不同的是运行时环境。</p>
+
+<p>Hadoop1的架构是：多个Application &ndash;&gt; JobTracker &ndash;&gt; 多个TaskTracker。</p>
+
+<p>hadoop2的架构是：多个application &ndash;&gt; ResourceManager &ndash;&gt; 多个NodeManager &ndash;&gt; 多个application Master &ndash;&gt; 多个container</p>
+
+<p>HDFS读写数据的过程</p>
+
+<p>读：</p>
+
+<p>1、跟namenode通信查询元数据，找到文件块所在的datanode服务器</p>
+
+<p>2、挑选一台datanode(就近原则，然后随机)服务器，请求建立socket流</p>
+
+<p>3、datanode开始发送数据(从磁盘里面读取数据放入流，以packet为单位来做校验)</p>
+
+<p>4、客户端以packet为单位接收，现在本地缓存，然后写入目标文件</p>
+
+<p>写：</p>
+
+<p>1、根namenode通信请求上传文件，namenode检查目标文件是否已存在，父目录是否存在</p>
+
+<p>2、namenode返回是否可以上传</p>
+
+<p>3、client请求第一个 block该传输到哪些datanode服务器上</p>
+
+<p>4、namenode返回3个datanode服务器ABC</p>
+
+<p>5、client请求3台dn中的一台A上传数据(本质上是一个RPC调用，建立pipeline)，A收到请求会继续调用B，然后B调用C，将真个pipeline建立完成，逐级返回客户端</p>
+
+<p>6、client开始往A上传第一个block(先从磁盘读取数据放到一个本地内存缓存)，以packet为单位，A收到一个packet就会传给B，B传给C;A每传一个packet会放入一个应答队列等待应答</p>
+
+<p>7、当一个block传输完成之后，client再次请求namenode上传第二个block的服务器。</p>
+
+<p>hadoop的shuffle过程</p>
+
+<p>一、Map端的shuffle</p>
+
+<p>Map端会处理输入数据并产生中间结果，这个中间结果会写到本地磁盘，而不是HDFS。每个Map的输出会先写到内存缓冲区中，当写入的数据达到设定的阈值时，系统将会启动一个线程将缓冲区的数据写到磁盘，这个过程叫做spill。
+在spill写入之前，会先进行二次排序，首先根据数据所属的partition进行排序，然后每个partition中的数据再按key来排序。partition的目是将记录划分到不同的Reducer上去，以期望能够达到负载均衡，以后的Reducer就会根据partition来读取自己对应的数据。接着运行combiner(如果设置了的话)，combiner的本质也是一个Reducer，其目的是对将要写入到磁盘上的文件先进行一次处理，这样，写入到磁盘的数据量就会减少。最后将数据写到本地磁盘产生spill文件(spill文件保存在{mapred.local.dir}指定的目录中，Map任务结束后就会被删除)。
+最后，每个Map任务可能产生多个spill文件，在每个Map任务完成前，会通过多路归并算法将这些spill文件归并成一个文件。至此，Map的shuffle过程就结束了。</p>
+
+<p>二、Reduce端的shuffle</p>
+
+<p>Reduce端的shuffle主要包括三个阶段，copy、sort(merge)和reduce。</p>
+
+<p>首先要将Map端产生的输出文件拷贝到Reduce端，但每个Reducer如何知道自己应该处理哪些数据呢?因为Map端进行partition的时候，实际上就相当于指定了每个Reducer要处理的数据(partition就对应了Reducer)，所以Reducer在拷贝数据的时候只需拷贝与自己对应的partition中的数据即可。每个Reducer会处理一个或者多个partition，但需要先将自己对应的partition中的数据从每个Map的输出结果中拷贝过来。
+接下来就是sort阶段，也成为merge阶段，因为这个阶段的主要工作是执行了归并排序。从Map端拷贝到Reduce端的数据都是有序的，所以很适合归并排序。最终在Reduce端生成一个较大的文件作为Reduce的输入。
+最后就是Reduce过程了，在这个过程中产生了最终的输出结果，并将其写到HDFS上。</p>
+
+<p>Reducer如何知道自己应该处理哪些数据呢？</p>
+
+<p>因为Map端进行partition的时候，实际上就相当于指定了每个Reducer要处理的数据(partition就对应了Reducer)，所以Reducer在拷贝数据的时候只需拷贝与自己对应的partition中的数据即可。每个Reducer会处理一个或者多个partition。
+MapReduce为每个数据分片（split）生成一个Map任务，对每条记录（RR）调用一次map( )方法。若一个Map任务处理的数据分片有n条记录，则在该Map任务中会调用n次map( )方法。map( )方法对输入的<key,value>进行处理，产生一系列新的键/值对[<key,value>]输出。
+在进入Reducer处理前，必须等所有的Map任务完成，因此在进入Reducer前需要一个同步障。这个阶段也负责对map输出的数据进行收集和整理，以便Reduce节点可以完全基于本节点上的数据计算。因此，同步障中对Map输出数据的一个重要处理就是按键值的数据分区（Partitioner）。
+Partitioner的作用就是对Map输出的中间结果按key进行分组，同一组的数据交给同一个Reduce节点处理，以避免Reduce节点在处理中访问其他Reduce节点。HadoopMapReduce框架中自带了一个HashPartitioner类，默认情况下，HashPartitioner对Map输出的中间结果<key,value>中的key取hash值，并按Reduce节点数取模来确定分配到哪一个Reduce节点。相同key值的中间结果一定送到同一个Reduce节点。
+Reducer是对Partitioner分区后送来的一组[<key,value>]进行合并处理的抽象类，其中重要的就是reduce( )方法。MapReduce为Reduce节点上相同key的一组value值（即<key,[value]>）调用一次reduce( )方法，对<key,[value]>进行整理或处理，产生最终的结果[<key,value>]。</p>
+
+<p>Cluster Manager：在standalone模式中即为Master主节点，控制整个集群，监控worker。在YARN模式中为资源管理器</p>
+
+<p>Worker节点：从节点，负责控制计算节点，启动Executor或者Driver。</p>
+
+<p>Driver： 运行Application 的main()函数</p>
+
+<p>Executor：执行器，是为某个Application运行在worker node上的一个进程</p>
+
+<p>spark运行流程图如下：</p>
+
+<p>1.构建Spark Application的运行环境，启动SparkContext</p>
+
+<p>2.SparkContext向资源管理器（可以是Standalone，Mesos，Yarn）申请运行Executor资源，并启动StandaloneExecutorbackend，</p>
+
+<p>3.Executor向SparkContext申请Task</p>
+
+<p>4.SparkContext将应用程序分发给Executor</p>
+
+<p>5.SparkContext构建成DAG图，将DAG图分解成Stage、将Taskset发送给Task Scheduler，最后由Task Scheduler将Task发送给Executor运行</p>
+
+<p>6.Task在Executor上运行，运行完释放所有资源</p>
+
+<p>Spark 1.X实际上有两个Context， SparkContext和SQLContext，它们负责不同的功能。 前者专注于对Spark的中心抽象进行更细粒度的控制，而后者则专注于Spark SQL等更高级别的API。
+在Spark 2.X中，这两个API被集成到SparkSession中。 但是，这两个API仍然存在。但需要注意，请尽可能的避免直接使用SQLContext和SparkContext，而通过SparkSession访问它们
+创建SparkContext一般要经过下面几个步骤：</p>
+
+<p>a). 导入Spark的类和隐式转换</p>
+
+<p>b). 构建Spark应用程序的应用信息对象SparkConf</p>
+
+<p>c). 利用SparkConf对象来初始化SparkContext</p>
+
+<p>d). 创建RDD、执行相应的Transformation和Action并得到最终结果。</p>
+
+<p>e). 关闭Context</p>
+
+<p>Stage概念是spark中独有的。一般而言一个Job会切换成一定数量的stage。各个stage之间按照顺序执行。至于stage是怎么切分的，首选得知道spark论文中提到的narrow dependency(窄依赖)和wide dependency（ 宽依赖）的概念。其实很好区分，看一下父RDD中的数据是否进入不同的子RDD，如果只进入到一个子RDD则是窄依赖，否则就是宽依赖。宽依赖和窄依赖的边界就是stage的划分点</p>
+
+<p>1.application启动之后, 会在本地启动一个Driver进程 用于控制整个流程,(假设我们使用的Standalone模式)</p>
+
+<p>2 首先需要初始化的是SparkContext, SparkContext 要构建出DAGScheduler,TaskScheduler</p>
+
+<p>3 在初始化TastScheduler的时候,它会去连接master,并向master 注册Application ,master 收到信息之后,会调用自己的资源调度算法,在spark集群的work上,启动Executor,并进行资源的分配,       最后将Executor 注册到TaskScheduler, 到这准备工作基本完成了</p>
+
+<p>4 现在可以进行我们编写的的业务了, 一般情况下通过sc.textFile(&ldquo;file&rdquo;)  去加载数据源( 这个过程类似于mr的inputformat加载数据的过程), 去将数据转化为RDD,</p>
+
+<p>5 DagScheduer  先按照action将程序划分为一至多个job(每一个job对应一个Dag), 之后对DagScheduer按照是否进行shuffer,将job划分为多个Stage  每个Stage过程都是taskset , dag  将taskset交给taskScheduler,由Work中的Executor去执行,  至于tast交给那个executor去执行, 由算法来决定,</p>
+
+<p>Spark on Yarn和MapReduce on Yarn区别</p>
+
+<p>在任务级别（特指Spark任务和MapReduce任务）上却采用了不同的并行机制：Hadoop MapReduce采用了多进程模型，而Spark采用了多线程模型。</p>
+
+<p>MapReduce多进程模型：每个Task运行在一个独立的JVM进程中；每个Task都要经历“申请资源—&gt; 运行Task –&gt; 释放资源”的过程。</p>
+
+<p>Spark多线程模型：每个节点上可以运行一个或多个Executor服务；每个Executor单独运行在一个JVM进程中，每个Task则是运行在Executor中的一个线程；Executor一旦启动后，将一直运行，且它的资源可以一直被Task复用，直到Spark程序运行完成后才释放退出。</p>
+
+<p>hadoop提供的接口核心是map和reduce函数，spark是mapreduce的扩展，提供两类操作(Transformation、Action)，而不是两个，使得使用更方便，开发时的代码会被spark的这种多样的API减少数十倍。</p>
+
+<p>Flink结构：</p>
+
+<p>flink cli 解析本地环境配置，启动 ApplicationMaster</p>
+
+<p>在 ApplicationMaster 中启动 JobManager</p>
+
+<p>在 ApplicationMaster 中启动YarnFlinkResourceManager</p>
+
+<p>YarnFlinkResourceManager给JobManager发送注册信息</p>
+
+<p>YarnFlinkResourceManager注册成功后，JobManager给YarnFlinkResourceManager发送注册成功信息</p>
+
+<p>YarnFlinkResourceManage知道自己注册成功后像ResourceManager申请和TaskManager数量对等的 container</p>
+
+<p>在container中启动TaskManager</p>
+
+<p>TaskManager将自己注册到JobManager中</p>
+
+<p>接下来便是程序的提交和运行。</p>
+
+<p>JobManager负责接收 flink 的作业，调度 task，收集 job 的状态、jar 包管理，checkpoint 的协调和发起，管理 TaskManagers。</p>
+
+<p>算子：flink 的一个 operator 代表一个最顶级的 API接口。对于streaming，在 DataStream 上做诸如 map/reduce/keyBy 等操作均会生成一个算子。</p>
+
+<p>TaskManager 在 Flink 中也被叫做一个 Instance，统一管理该物理节点上的所有Flink job的task运行，它的功能包括了task的启动销毁、内存管理、磁盘IO、网络传输管理等等。</p>
+
+<p>Flink 集群启动后架构图</p>
+
+<p>当 Flink 集群启动后，首先会启动一个 JobManger 和一个或多个的 TaskManager。由 Client 提交任务给 JobManager，JobManager 再调度任务到各个 TaskManager 去执行，然后 TaskManager 将心跳和统计信息汇报给 JobManager。TaskManager 之间以流的形式进行数据的传输。上述三者均为独立的 JVM 进程。
+Client 为提交 Job 的客户端，可以是运行在任何机器上（与 JobManager 环境连通即可）。提交 Job 后，Client 可以结束进程（Streaming的任务），也可以不结束并等待结果返回。
+JobManager 主要负责调度 Job 并协调 Task 做 checkpoint，职责上很像 Storm 的 Nimbus。从 Client 处接收到 Job 和 JAR 包等资源后，会生成优化后的执行计划，并以 Task 的单元调度到各个 TaskManager 去执行。
+TaskManager 在启动的时候就设置好了槽位数（Slot），每个 slot 能启动一个 Task，Task 为线程。从 JobManager 处接收需要部署的 Task，部署启动后，与自己的上游建立 Netty 连接，接收数据并处理。</p>
+
+<p>Graph</p>
+
+<p>Flink 中的执行图可以分成四层：StreamGraph -&gt; JobGraph -&gt; ExecutionGraph -&gt; 物理执行图。</p>
+
+<p>StreamGraph： 是根据用户通过 Stream API 编写的代码生成的最初的图。用来表示程序的拓扑结构。</p>
+
+<p>JobGraph： StreamGraph经过优化后生成了 JobGraph，提交给 JobManager 的数据结构。主要的优化为，将多个符合条件的节点 chain 在一起作为一个节点，这样可以减少数据在节点之间流动所需要的序列化/反序列化/传输消耗。</p>
+
+<p>ExecutionGraph： JobManager 根据 JobGraph 生成的分布式执行图，是调度层最核心的数据结构。</p>
+
+<p>物理执行图： JobManager 根据 ExecutionGraph 对 Job 进行调度后，在各个TaskManager 上部署 Task 后形成的“图”，并不是一个具体的数据结构。
+Flink 4层转化流程</p>
+
+<p>第一层:Program -&gt; StreamGraph</p>
+
+<p>第二层：StreamGraph -&gt; JobGraph</p>
+
+<p>第三层：JobGraph -&gt; ExecutionGraph</p>
+
+<p>第四层：Execution -&gt; 物理执行计划</p>
+
+<p>StreamGraph是对用户逻辑的映射（拓扑图）。JobGraph在此基础上进行了一些优化，比如把一部分操作串成chain以提高效率。ExecutionGraph是为了调度存在的，加入了并行处理的概念。而在此基础上真正执行的是Task及其相关结构。</p>
+
+<p>如何转换成StreamGraph</p>
+
+<p>从StreamExecutionEnvironment.execute开始执行程序，将transform添加到
+StreamExecutionEnvironment的transformations
+调用StreamGraphGenerator的generateInternal方法，遍历transformations构建
+StreamNode及StreamEage
+通过streaEdge连接StreamNode</p>
+
+<p>StreamGraph到JobGraph的转化
+具体步骤</p>
+
+<p>? 设置调度模式，Eager所有节点?即启动</p>
+
+<p>? ?度优先遍历StreamGraph，为每个streamNode?成byte数组类型的hash值</p>
+
+<p>? 从source节点开始递归寻找chain到?起的operator，不能chain到?起的节点单独?成jobVertex，能
+够chaind到?起的,开始节点?成jobVertex,其他节点以序列化的形式写?到StreamConfig，然后
+merge到CHAINED_TASK_CONFIG ，然后通过JobEdge链接上下游JobVertex</p>
+
+<p>? 将每个JobVertex的?边(StreamEdge)序列化到该StreamConfig</p>
+
+<p>? 根据group name为每个JobVertext指定SlotSharingGroup</p>
+
+<p>? 配置checkpoint</p>
+
+<p>? 将缓存?件存?件的配置添加到configuration中</p>
+
+<p>? 设置置ExecutionConfig</p>
+
+<p>JobGraph到ExexcutionGraph以及物理执?计划
+主要ExecutionGraphBuilder的buildGraph?法??，关键流程</p>
+
+<p>1）将JobGraph??的jobVertex从source节点开始排序
+2）executionGraph.attachJobGraph(sortedTopology)?法??
+l 根据JobVertex?成ExecutionJobVertex，在ExecutionJobVertex构造?法??，根据jobVertex的
+IntermediateDataSet构建IntermediateResult，根据jobVertex并发构建ExecutionVertex，ExecutionVertex
+构建的时候，构建IntermediateResultPartition（每?个Execution构建IntermediateResult个数个
+IntermediateResultPartition ）
+l 将创建的ExecutionJobVertex与前置的IntermediateResult连接起来
+3）构建ExecutionEdge ，连接到前?的IntermediateResultPartition
+最核心的是 Task Slot，每个slot能运行一个或多个task。为了拓扑更高效地运行，Flink提出了Chaining，尽可能地将operators chain在一起作为一个task来处理。为了资源更充分的利用，Flink又提出了SlotSharingGroup，尽可能地让多个task共享一个slot。
+Flink 允许subtasks共享slot，条件是它们都来自同一个Job的不同task的subtask。
+Yarn基本架构
+ResourceManager
+整个集群只有一个，负责集群资源的统一管理和调度
+NodeManager
+整个集群存在多个，负责单节点资源管理与使用
+ApplicationMaster
+每一个应用有一个，负责应用程序的管理
+数据切分，申请资源，任务监控，任务容错
+Container
+对任务环境的抽象
+整个的调度流程为：
+1.应用程序通client类向ResourceManager提交程序，Application运行所需要的入口类，出口类，运行的命令，运行所需要的cpu资源和内存资源，jar包资源。
+2.ResourceManager通过内部的调度器，去集群中寻找资源，找到资源后与NodeManager进行通信，去启动相应的ApplicationMaster,AM会按照事先的规划将任务切分为许多的task任务。
+3.ApplicationMaster之后向ResourceManager进行申请资源，RM会将资源进行动态的分配。
+4.ApplicationMaster获得资源后会再将资源进一步分配给内部的task.
+5.之后，ApplicationMaster会向NodeManager进行请求，让NM给启动起来Task,NM会把Task封装到Container中允许。
+Flink 应用程序结构：
+1、Source: 数据源，Flink 在流处理和批处理上的 source 大概有 4 类：基于本地集合的 source、基于文件的 source、基于网络套接字的 source、自定义的 source。自定义的 source 常见的有 Apache kafka、Amazon Kinesis Streams、RabbitMQ、Twitter Streaming API、Apache NiFi 等，当然你也可以定义自己的 source。
+2、Transformation：数据转换的各种操作，有 Map / FlatMap / Filter / KeyBy / Reduce / Fold / Aggregations / Window / WindowAll / Union / Window join / Split / Select / Project 等，操作很多，可以将数据转换计算成你想要的数据。
+3、Sink：接收器，Flink 将转换计算后的数据发送的地点 ，你可能需要存储下来，Flink 常见的 Sink 大概有如下几类：写入文件、打印出来、写入 socket 、自定义的 sink 。自定义的 sink 常见的有 Apache kafka、RabbitMQ、MySQL、ElasticSearch、Apache Cassandra、Hadoop FileSystem 等，同理你也可以定义自己的 Sink。
+Spark vs Flink
+Spark Streaming ：设置批处理时间；创建数据流；编写transform；编写action；启动执行
+Flink：注册数据 source；编写运行逻辑；注册数据 sink；调用 env.execute
+相比于 Spark Streaming 少了设置批处理时间，还有一个显著的区别是 flink 的所有算子都是 lazy 形式的，调用 env.execute 会构建 jobgraph。client 端负责 Jobgraph 生成并提交它到集群运行；而 Spark Streaming的操作算子分 action 和 transform，其中仅有 transform 是 lazy 形式，而且 DAG生成、stage 划分、任务调度是在 driver 端进行的，在 client 模式下 driver 运行于客户端处。
+对于编码完成的 Spark Core 任务在生成到最终执行结束主要包括以下几个部分：
+构建 DAG 图；划分 stage；生成 taskset；调度 task。
+由于数据本地性和调度不确定性，每个批次对应 kafka 分区生成的 task 运行位置并不是固定的。
+对于 flink 的流任务客户端首先会生成 StreamGraph，接着生成 JobGraph，然后将 jobGraph 提交给 Jobmanager 由它完成 jobGraph 到 ExecutionGraph 的转变，最后由 jobManager 调度执行。
+可以看出 flink 的拓扑生成提交执行之后，除非故障，否则拓扑部件执行位置不变，并行度由每一个算子并行度决定，类似于 storm。而 spark Streaming 是每个批次都会根据数据本地性和资源情况进行调度，无固定的执行拓扑结构。 flink 是数据在拓扑结构里流动执行，而 Spark Streaming 则是对数据缓存批次并行处理。
+ZooKeeper
+ZooKeeper 是一个典型的分布式数据一致性解决方案，分布式应用程序可以基于 ZooKeeper 实现诸如数据发布/订阅、负载均衡、命名服务、分布式协调/通知、集群管理、Master 选举、分布式锁和分布式队列等功能。
+ZooKeeper 一个最常用的使用场景就是用于担任服务生产者和服务消费者的注册中心。
+服务生产者将自己提供的服务注册到 ZooKeeper 中心，服务的消费者在进行服务调用的时候先到 ZooKeeper 中查找服务，获取到服务生产者的详细信息之后，再去调用服务生产者的内容与数据。
+Zookeeper 作为一个分布式的服务框架，主要用来解决分布式集群中应用系统的一致性问题，它能提供基于类似于文件系统的目录节点树方式的数据存储，但是 Zookeeper 并不是用来专门存储数据的，它的作用主要是用来维护和监控你存储的数据的状态变化。通过监控这些数据状态的变化，从而可以达到基于数据的集群管理。
+简单的说，zookeeper=文件系统+通知机制。
+Zookpeeper的基本架构
+1 每个Server在内存中存储了一份数据；
+2 Zookeeper启动时，将从实例中选举一个leader（Paxos协议）；
+3 Leader负责处理数据更新等操作（Zab协议）；
+4 一个更新操作成功，当且仅当大多数Server在内存中成功修改数据。
+Zookeeper Server数目一般为奇数
+用到Zookeeper的系统
+HDFS中的HA方案
+YARN的HA方案
+HBase：必须依赖Zookeeper，保存了Regionserver的心跳信息，和其他的一些关键信息。
+Flume：负载均衡，单点故障
+Kafka
+一个典型的Kafka集群中包含若干Producer（可以是web前端产生的Page View，或者是服务器日志，系统CPU、Memory等），若干broker（Kafka支持水平扩展，一般broker数量越多，集群吞吐率越高），若干Consumer Group，以及一个Zookeeper集群。Kafka通过Zookeeper管理集群配置，选举leader，以及在Consumer Group发生变化时进行rebalance。Producer使用push模式将消息发布到broker，Consumer使用pull模式从broker订阅并消费消息。
+Kafka生产过程分析
+producer采用推（push）模式将消息发布到broker，每条消息都被追加（append）到分区（patition）中，属于顺序写磁盘（顺序写磁盘效率比随机写内存要高，保障kafka吞吐率）。
+消息发送时都被发送到一个topic，其本质就是一个目录，而topic是由一些Partition Logs(分区日志)组成。
+发布到Kafka主题的每条消息包括键值和时间戳。消息到达服务器端的指定分区后，都会分配到一个自增的偏移量。原始的消息内容和分配的偏移量以及其他一些元数据信息最后都会存储到分区日志文件中。
+Kafka以分区作为最小的粒度，将每个分区分配给消费者组中不同的而且是唯一的消费者，并确保一个分区只属于一个消费者，即这个消费者就是这个分区的唯一读取线程。那么，只要分区的消息是有序的，消费者处理的消息顺序就有保证。每个主题有多个分区，不同的消费者处理不同的分区，所以Kafka不仅保证了消息的有序性，也做到了消费者的负载均衡。
+Kafka消费过程分析
+kafka提供了两套consumer API：高级Consumer API和低级API。
+Kafka采用拉取模型，由消费者自己记录消费状态，每个消费者互相独立地顺序读取每个分区的消息。
+高级API 写起来简单
+不需要自行去管理offset，系统通过zookeeper自行管理。
+不需要管理分区，副本等情况，.系统自动管理。
+低级 API 优点
+能够让开发者自己控制offset，想从哪里读取就从哪里读取。
+低级API缺点
+太过复杂，需要自行控制offset，连接哪个分区，找到分区leader 等。
+Kafka默认保证At least once，并且允许通过设置Producer异步提交来实现At most once。而Exactly once要求与外部存储系统协作，幸运的是Kafka提供的offset可以非常直接非常容易得使用这种方式。
+flume
+flume的核心是把数据从数据源(source)收集过来，在将收集到的数据送到指定的目的地(sink)。为了保证输送的过程一定成功，在送到目的地(sink)之前，会先缓存数据(channel),待数据真正到达目的地(sink)后，flume在删除自己缓存的数据。
+flume之所以这么神奇，是源于它自身的一个设计，这个设计就是agent，agent本身是一个Java进程，运行在日志收集节点—所谓日志收集节点就是服务器节点。
+agent里面包含3个核心的组件：source—-&gt;channel—–&gt;sink,类似生产者、仓库、消费者的架构。
+source：source组件是专门用来收集数据的，可以处理各种类型、各种格式的日志数据,包括avro、thrift、exec、jms、spooling directory、netcat、sequence generator、syslog、http、legacy、自定义。
+channel：source组件把数据收集来以后，临时存放在channel中，即channel组件在agent中是专门用来存放临时数据的——对采集到的数据进行简单的缓存，可以存放在memory、jdbc、file等等。
+sink：sink组件是用于把数据发送到目的地的组件，目的地包括hdfs、logger、avro、thrift、ipc、file、null、Hbase、solr、自定义。
+Akka
+Akka 是 JVM 平台上构建高并发、分布式和容错应用的工具包和运行时。
+Akka 处理并发的方法基于 Actor 模型。
+Actor与Actor之前只能用消息进行通信，当某一个Actor给另外一个Actor发消息，消息是有顺序的，你只需要将消息投寄的相应的邮箱，至于对方Actor怎么处理你的消息你并不知道，当然你也可等待它的回复。
+每个Actor都有对应一个邮箱
+Actor是串行处理消息的
+Actor中的消息是不可变的
+spark 在1.6.0之后使用Netty替代了Akka
+Akka在Flink中用于三个分布式技术组件之间的通信，他们是JobClient，JobManager，TaskManager。
+Netty和Akka有什么不同？
+Netty是一个异步网络库，使JAVA NIO的功能更好用。 hadoop、dubbo、akka等具有分布式功能的框架，底层RPC通信都是基于netty实现的
+Akka相对于Netty来说，是一个更高层次的抽象。
+为什么 spark 2.0 底层通信不用 Akka 而转用 netty ？
+很多Spark用户也使用Akka，但是由于Akka不同版本之间无法互相通信，这就要求用户必须使用跟Spark完全一样的Akka版本，导致用户无法升级Akka。
+Ambari
+Ambari是Hadoop分布式集群配置管理工具，是由hortonworks主导的开源项目，它已经成为了apache基金会的开源项目，已经成为Hadoop运维系统中的得力助手。
+Ambari充分利用了一些已有的优秀开源软件，巧妙地把它们结合起来，使其在分布式环境中做到了集群式服务管理能力、监控能力、展示能力，这些优秀的开源软件有：
+（1）、agent端，采用了puppet管理节点。
+（2）、在web端，采用ember.js作为前端MVC框架和NodeJS相关工具，用handlebars.js作为页面渲染引擎，在CSS/HTML方面还用了Bootstrap框架。
+（3）、在Server端，采用了Jetty、Spring、JAX-RS等。
+（4）、同时利用了Ganglia、Nagios的分布式监控能力。
+Ambari框架采用的是Server/Client的模式，主要由两部分组成：ambari-agent和ambari-server。
+Hadoop1的架构是：多个Application &ndash;&gt; JobTracker &ndash;&gt; 多个TaskTracker。
+hadoop2的架构是：多个application &ndash;&gt; ResourceManager &ndash;&gt; 多个NodeManager &ndash;&gt; 多个application Master &ndash;&gt; 多个container
+Yarn基本架构
+ResourceManager/NodeManager/ApplicationMaster/
+Container
+（ApplicationMaster负责向ResourceManager索要NodeManager执行任务所需要的资源容器Container）
+Spark架构
+Cluster Manager/Worker节点/Driver/Executor
+(1. Driver构建Spark Application的运行环境，启动SparkContext
+2.SparkContext向资源管理器（可以是Standalone，Mesos，Yarn）申请运行Executor资源，并启动StandaloneExecutorbackend，
+3.Executor向SparkContext申请Task
+4.SparkContext将应用程序分发给Executor
+5.SparkContext构建成DAG图，将DAG图分解成Stage、将Taskset发送给Task Scheduler，最后由Task Scheduler将Task发送给Executor运行
+6.Task在Executor上运行，运行完释放所有资源)
+Flink 架构：
+Client、JobManager(master节点)和TaskManger(slave节点)。
+(Flink中JobManager负责与Client和TaskManager交互，Client将JobGraph提交给JobManager，然后其将JobGraph转换为ExecutionGraph，并分发到TaskManager上执行。
+Flink 中的执行图可以分成四层：StreamGraph -&gt; JobGraph -&gt; ExecutionGraph -&gt; 物理执行图
+StreamGraph是对用户逻辑的映射（拓扑图）。JobGraph在此基础上进行了一些优化，比如把一部分操作串成chain以提高效率。ExecutionGraph是为了调度存在的，加入了并行处理的概念。而在此基础上真正执行的是Task及其相关结构。
+)
+Kafka架构
+Producer/ Broker/ Consumer+Zookeeper
+flume架构
+agent里面包含3个核心的组件：source—-&gt;channel—–&gt;sink,类似生产者、仓库、消费者的架构。
+Zookeeper 架构
+Zookeeper 是一个由多个 server 组成的集群,一个 leader，多个 follower。leader 为客户端服务器提供读写服务，除了leader外其他的机器只能提供读服务。
+简单的说，zookeeper=文件系统+通知机制。</p>
+
+    </div>
+    <div class="post-footer">
+      
+    </div>
+  </article>
+
+    </main>
+  </body>
+</html>
