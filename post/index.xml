@@ -6,10 +6,35 @@
     <description>Recent content in Posts on YYF</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
-    <lastBuildDate>Sat, 24 Aug 2019 19:14:26 +0800</lastBuildDate>
+    <lastBuildDate>Sat, 24 Aug 2019 21:13:19 +0800</lastBuildDate>
     
 	<atom:link href="https://yangyanfa.github.io/post/index.xml" rel="self" type="application/rss+xml" />
     
+    
+    <item>
+      <title>8.24总结</title>
+      <link>https://yangyanfa.github.io/post/8.24/</link>
+      <pubDate>Sat, 24 Aug 2019 21:13:19 +0800</pubDate>
+      
+      <guid>https://yangyanfa.github.io/post/8.24/</guid>
+      <description>如何将批量win的cmd命令写成自动执行的脚本文件？ 1.新建一个TXT文件，将要执行的cmd命令一条一条地写上，条与条之间换行。
+2.全部写完之后，将TXT文件另存为.bat文件，注意文件保存的路径与cmd命令所执行路径的关系。
+Java的基本语法运用 1.键盘输入：
+Scanner sc = new Scanner(System.in);
+int n = sc.nextInt();
+或者 char c = sc.nextChar();
+或者 float f = sc.nextFloat();
+2.字符串定位函数及分割函数：
+String s = “56+12*4-9”；
+或者String s = new String(&amp;ldquo;9+3+4*3&amp;rdquo;);
+s.charAt(0); //字符串s中第一个位置的元素
+String strarray = s.split(&amp;rdquo;\+&amp;ldquo;);
+//在Java中，不管是String.split()，还是正则表达式，有一些特殊字符需要转义，
+这些字符是
+( [ { / ^ - $ ¦ } ] ) ? * + .
+转义方法为字符前面加上“\ \”,这样在split、replaceAll时就不会报错了；
+不过要注意，String.contains()方法不需要转义。</description>
+    </item>
     
     <item>
       <title>大数据面试</title>
