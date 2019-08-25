@@ -6,10 +6,21 @@
     <description>Recent content in Posts on YYF</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
-    <lastBuildDate>Sat, 24 Aug 2019 21:13:19 +0800</lastBuildDate>
+    <lastBuildDate>Sun, 25 Aug 2019 19:59:30 +0800</lastBuildDate>
     
 	<atom:link href="https://yangyanfa.github.io/post/index.xml" rel="self" type="application/rss+xml" />
     
+    
+    <item>
+      <title>8.25</title>
+      <link>https://yangyanfa.github.io/post/8.25/</link>
+      <pubDate>Sun, 25 Aug 2019 19:59:30 +0800</pubDate>
+      
+      <guid>https://yangyanfa.github.io/post/8.25/</guid>
+      <description>Windows 常用快捷键总结（以后将不断更新） win+ctrl+D -&amp;gt; 新建一个桌面，可以在任务视图里切换（win+tab）
+ctrl+shift+esc -&amp;gt; 打开任务窗口
+win+shift+s -&amp;gt; 截屏</description>
+    </item>
     
     <item>
       <title>8.24总结</title>
