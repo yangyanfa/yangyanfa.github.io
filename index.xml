@@ -6,10 +6,25 @@
     <description>Recent content on YYF</description>
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
-    <lastBuildDate>Fri, 06 Sep 2019 21:12:37 +0800</lastBuildDate>
+    <lastBuildDate>Sat, 07 Sep 2019 20:21:16 +0800</lastBuildDate>
     
 	<atom:link href="https://yangyanfa.github.io/index.xml" rel="self" type="application/rss+xml" />
     
+    
+    <item>
+      <title>9.7</title>
+      <link>https://yangyanfa.github.io/post/9.7/</link>
+      <pubDate>Sat, 07 Sep 2019 20:21:16 +0800</pubDate>
+      
+      <guid>https://yangyanfa.github.io/post/9.7/</guid>
+      <description> eclipse如何导入Web工程  先把工程拷贝到工作空间内 Existing Projects into Workspace
+ 凡是不是在自己电脑上写的工程，都要重新配置编译环境
+ 选择导入的工程，右键-&amp;gt;properties（alt+enter）
+ Java Build Path-&amp;gt;Libraries-&amp;gt;JRE System Library-&amp;gt;Edit-&amp;gt;Workspace default JRE
+ Apache Tomcat-&amp;gt;Edit-&amp;gt;选择自己的tomcat版本
+ Java Compiler-&amp;gt;Compiler compliance level-&amp;gt;选择自己的JDK版本
+ Apply and Close  </description>
+    </item>
     
     <item>
       <title>9.6</title>
