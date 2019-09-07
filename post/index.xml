@@ -25,7 +25,10 @@ ctr+D 自动收尾
 ctr+shift+enter 格式化代码
 ctr+alt+L 根据表达式计算结果，自动生成对应的变量及类型名
 ctr+alt+V 生成array for代码块
-itar 导包 alt+enter 生成各种方法 ait+insert  生成try catch ctr+alt+t  </description>
+itar 导包
+alt+enter 生成各种方法
+ait+insert  生成try catch
+ctr+alt+t  </description>
     </item>
     
     <item>
